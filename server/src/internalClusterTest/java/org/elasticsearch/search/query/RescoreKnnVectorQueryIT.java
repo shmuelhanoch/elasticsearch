@@ -196,8 +196,6 @@ public class RescoreKnnVectorQueryIT extends ESIntegTestCase {
         indexRandom(true, docs);
 
         float[] queryVector = testParams.queryVector;
-        float oversample = randomFloatBetween(1.0f, 100f, true);
-        RescoreVectorBuilder rescoreVectorBuilder = new RescoreVectorBuilder(oversample);
 
         SearchRequestBuilder requestBuilder = searchRequestGenerator.apply(
             testParams,
@@ -219,16 +217,16 @@ public class RescoreKnnVectorQueryIT extends ESIntegTestCase {
         assertNoFailuresAndResponse(prepareSearch(INDEX_NAME).setQuery(scriptScoreQueryBuilder).setSize(docCount), exactResponse -> {
             assertHitCount(exactResponse, docCount);
 
-            int i = 0;
-            SearchHit[] exactHits = exactResponse.getHits().getHits();
+            // Build a map of document ID to score for efficient lookup
+            Map<String, Float> exactScores = Arrays.stream(exactResponse.getHits().getHits())
+                .collect(Collectors.toMap(SearchHit::getId, SearchHit::getScore));
+            
             for (SearchHit knnHit : knnResponse.getHits().getHits()) {
-                while (i < exactHits.length && exactHits[i].getId().equals(knnHit.getId()) == false) {
-                    i++;
+                Float exactScore = exactScores.get(knnHit.getId());
+                if (exactScore == null) {
+                    fail("Knn doc " + knnHit.getId() + " not found in exact search");
                 }
-                if (i >= exactHits.length) {
-                    fail("Knn doc not found in exact search");
-                }
-                assertThat("Real score is not the same as rescored score", knnHit.getScore(), equalTo(exactHits[i].getScore()));
+                assertThat("Real score is not the same as rescored score", knnHit.getScore(), equalTo(exactScore));
             }
         });
     }

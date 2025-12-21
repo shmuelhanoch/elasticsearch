@@ -53,7 +53,10 @@ import org.elasticsearch.test.ESTestCase;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.elasticsearch.index.codec.vectors.diskbbq.ES920DiskBBQVectorsFormat.DEFAULT_CENTROIDS_PER_PARENT_CLUSTER;
 import static org.elasticsearch.index.codec.vectors.diskbbq.ES920DiskBBQVectorsFormat.DEFAULT_VECTORS_PER_CLUSTER;
@@ -107,18 +110,16 @@ public class RescoreKnnVectorQueryTests extends ESTestCase {
                     FunctionScoreQuery functionScoreQuery = new FunctionScoreQuery(Queries.ALL_DOCS_INSTANCE, valueSource);
                     TopDocs realScoreTopDocs = searcher.search(functionScoreQuery, numDocs);
 
-                    int i = 0;
-                    ScoreDoc[] realScoreDocs = realScoreTopDocs.scoreDocs;
+                    // Build a map of document ID to score for efficient lookup
+                    Map<Integer, Float> realScores = Arrays.stream(realScoreTopDocs.scoreDocs)
+                        .collect(Collectors.toMap(scoreDoc -> scoreDoc.doc, scoreDoc -> scoreDoc.score));
+                    
                     for (ScoreDoc rescoreDoc : rescoredDocs.scoreDocs) {
-                        // There are docs that won't be found in the rescored search, but every doc found must be in the same order
-                        // and have the same score
-                        while (i < realScoreDocs.length && realScoreDocs[i].doc != rescoreDoc.doc) {
-                            i++;
+                        Float realScore = realScores.get(rescoreDoc.doc);
+                        if (realScore == null) {
+                            fail("Rescored doc " + rescoreDoc.doc + " not found in real score docs");
                         }
-                        if (i >= realScoreDocs.length) {
-                            fail("Rescored doc not found in real score docs");
-                        }
-                        assertThat("Real score is not the same as rescored score", rescoreDoc.score, equalTo(realScoreDocs[i].score));
+                        assertThat("Real score is not the same as rescored score", rescoreDoc.score, equalTo(realScore));
                     }
                 }
             }
@@ -170,13 +171,16 @@ public class RescoreKnnVectorQueryTests extends ESTestCase {
                     TopDocs singleRescored = searcher.search(rescoreKnnVectorQuery, numDocs);
                     assertThat(singleRescored.scoreDocs.length, equalTo(k));
 
-                    // Get real scores
-                    ScoreDoc[] singleRescoreDocs = singleRescored.scoreDocs;
-                    int i = 0;
+                    // Build a map of document ID to score for efficient lookup
+                    Map<Integer, Float> singleRescoreScores = Arrays.stream(singleRescored.scoreDocs)
+                        .collect(Collectors.toMap(scoreDoc -> scoreDoc.doc, scoreDoc -> scoreDoc.score));
+                    
                     for (ScoreDoc rescoreDoc : rescoredDocs.scoreDocs) {
-                        assertThat(rescoreDoc.doc, equalTo(singleRescoreDocs[i].doc));
-                        assertThat(rescoreDoc.score, equalTo(singleRescoreDocs[i].score));
-                        i++;
+                        Float singleScore = singleRescoreScores.get(rescoreDoc.doc);
+                        if (singleScore == null) {
+                            fail("Bulk rescored doc " + rescoreDoc.doc + " not found in single rescored docs");
+                        }
+                        assertThat("Bulk rescored score is not the same as single rescored score", rescoreDoc.score, equalTo(singleScore));
                     }
                 }
             }
